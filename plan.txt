@@ -1,0 +1,22 @@
+main.py
+    - passed in the image from camera
+    - calls detection files
+    - shows final images
+target_detection.py
+    - passed full picture
+    - detect the locations of the targets
+    - return (x, y, width, height) for each target, maybe print the number of targets detected
+color_detection.py, run once per target
+    - passed a cropped image (bgr) of a target
+    - detects the color of each target
+        - currently trying to use kmeans
+    - returns the dominant color of the image
+shape_detection.py
+    - passed cropped image of a target
+    - detect shapes
+        - don't remember if the method we had was good or not
+    - return the shape of the image
+letter_detection.py
+    - passed cropped image of a target
+    - detect character
+    - return character
