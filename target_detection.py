@@ -9,7 +9,7 @@ def k_means_detection(image_path, total_colors):
     k = total_colors
     data = np.float32(cartoonImage).reshape((-1, 3))
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 0.001)
-    ret, label, center = cv2.kmeans(data, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+    _, _, center = cv2.kmeans(data, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
     center = np.uint8(center)
     masks = []
     for i in range(k):
@@ -43,56 +43,20 @@ def k_means_detection(image_path, total_colors):
     return target_image
 
 
-def find_shape(contour, rect_location_x, rect_location_y):
-    """
-    Function to detect shapes of targets.
+def reject_outliers(dataset, indices_to_reject):
+    for index in indices_to_reject:
+        mean = 0
+        for list in dataset:
+            mean += list[index]
 
-    Args:
-        contour (numpy.ndarray): The contour to be analyzed and for which the shape is determined.
-        rect_location_x (int): The X-coordinate of the bounding rectangle's top-left corner relative to the image.
-        rect_location_y (int): The Y-coordinate of the bounding rectangle's top-left corner relative to the image.
+        mean /= len(dataset)
 
-    Returns:
-        shape_dict (dict): A dictionary containing the location (X, Y) of the shape in the image and the number of sides of the detected shape.
-    """
-    approx = cv2.approxPolyDP(contour, 0.06 * cv2.arcLength(contour, True), True)  # approximates number of sides
+        for i, list in enumerate(dataset):
+            if list[index] < 0.5 * mean:
+                dataset.pop(i)
 
-    # gets location of the shapes in the image and adds to dictionary of shape locations & sides
-    M = cv2.moments(contour)
-    if M['m00'] != 0.0:
-        x = int(M['m10'] / M['m00'])
-        y = int(M['m01'] / M['m00'])
-
-        shape_dict = {}
-        shape_dict[str(x + rect_location_x) + ", " + str(y + rect_location_y)] = len(approx)
-        print(shape_dict)
-        return shape_dict
-
-
-def contour_intersect(original_image, contour1, contour2):
-    """
-    Function to check if two contours intersect within an original image.
-    https://stackoverflow.com/questions/55641425/check-if-two-contours-intersect
-
-    Args:
-        original_image (numpy.ndarray): The original image containing the contours.
-        contour1 (numpy.ndarray): The first contour to check for intersection.
-        contour2 (numpy.ndarray): The second contour to check for intersection.
-
-    Returns:
-        bool: True if the contours intersect; otherwise, False.
-    """
-    contours = [contour1, contour2]
-
-    blank = np.zeros(original_image.shape[0:2])
-
-    image1 = cv2.drawContours(blank.copy(), contours, 0, 1)
-    image2 = cv2.drawContours(blank.copy(), contours, 1, 1)
-
-    intersection = np.logical_and(image1, image2)
-
-    return intersection.any()
-
+    return dataset
+    
 
 def detect_targets(image_path):
     """
@@ -104,15 +68,11 @@ def detect_targets(image_path):
     Returns:
         tuple: A tuple containing two images - the masked result image and the image with contours and shapes overlaid.
     """
-    color_image = cv2.imread(image_path)
-    original_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
-    final_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
-
     target_image = k_means_detection(image_path, 10)
 
     # finds contours, sets a minimum and maximum area to detect letters
     grayscale_image = cv2.cvtColor(target_image, cv2.COLOR_BGR2GRAY)
-    contours, hierarchy = cv2.findContours(grayscale_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(grayscale_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     min_contour_area = 15
     contours = [i for i in contours if cv2.contourArea(i) > min_contour_area]
 
@@ -120,56 +80,27 @@ def detect_targets(image_path):
 
     # for loop to draw contours for each shape detected
     for cnt in contours:
-        # creates bounded rectangle
-        [x, y, w, h] = cv2.boundingRect(cnt)
-        locations.append([x,y])
-        x -= 15
-        y -= 15
+        x, y, w, h = cv2.boundingRect(cnt)
+        dimensions = [x, y, w, h]
 
-        # crops image to bounded rectangle and creates a grayscale image
-        cropped_image = color_image[y:y+h+30, x:x+w+30]
-        cropped_grayscale_image = cv2.cvtColor(cropped_image, cv2.COLOR_BGR2GRAY)
+        locations.append(dimensions)
 
-        # applies threshold algorithm
-        threshold_image = cv2.threshold(cropped_grayscale_image, 127, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    indices_to_reject = [2, 3]
+    locations = reject_outliers(locations, indices_to_reject)
+    locations = [l[:2] for l in locations]
 
-        # finds contours in cropped image
-        contours, hierarchy = cv2.findContours(threshold_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours = [i for i in contours if cv2.contourArea(i) > min_contour_area]
-
-        # creates convex hulls from contours
-        hull = []
-        for cnt in contours:
-            #for i in range(len(contours)):
-            #    if not contour_intersect(cropped_image, cnt, contours[i]):
-            hull.append(cv2.convexHull(cnt, False))
-
-        # draws the convex hulls on the cropped image
-        cv2.drawContours(cropped_image, hull, -1, (0, 255, 0), 3)
-
-        # overlays cropped image onto color image
-        final_image[y:y+cropped_image.shape[0], x:x+cropped_image.shape[1]] = cropped_image
-
-    return locations, original_image, target_image, final_image
+    return locations, target_image
 
 
-def display_graph(original_image, target_image, final_image):
+def display_graph(image):
     """
     Function to display a graph showing images.
 
     Args:
-        result_image (numpy.ndarray): The masked result image.
-        final_image (numpy.ndarray): The image with contours and shapes overlaid.
+        image (numpy.ndarray): The image to be displayed.
 
     Returns:
         None: This function displays the graph using Matplotlib.
     """
-    titles = ['Original Image', 'Masked', 'Contours']
-    images = [original_image, target_image, final_image]
-    for i in range(3):
-        plt.subplot(2, 2, i + 1)
-        plt.imshow(images[i], 'gray', vmin=0, vmax=255)
-        plt.title(titles[i])
-        plt.xticks([])
-        plt.yticks([])
+    imgplot = plt.imshow(image)
     plt.show()
